@@ -1,0 +1,956 @@
+---
+title: "Final Regressions"
+author: "Natalie Tomeh"
+date: "5/11/2021"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    highlight: "tango"
+---
+
+
+```{r Set Up, message = F, warning = F, echo = F}
+# Loading Libraries 
+library(tidyverse)
+library(tidymodels)
+library(Metrics)
+library(gtsummary)
+
+library(knitr)
+library(kableExtra)
+
+
+# Loading 
+
+## Functions 
+load("data_editing/functions.rda")
+
+## Data 
+loaded <- read_csv("data/datasets/final.csv")
+
+# Setting not in 
+`%notin%` <- negate(`%in%`)
+
+ 
+# Removing Scientific Notation 
+options(scipen = 999)
+```
+
+```{r Datasets, message = F, warning = F, echo = F}
+all <- lens()
+
+with_kids <- lens(with_kids = T) 
+
+low_income <- lens(low_income = T)
+
+low_income_with_kids <- lens(low_income = T, with_kids = T)
+```
+
+
+```{r echo = F, message = F, warning = F}
+with_kids_3m <- with_kids %>% 
+  select(t, state, pebt) %>% 
+  mutate(t = t + 4) %>% 
+  filter(pebt == 1) %>% 
+  rbind(with_kids %>% 
+  select(t, state, pebt) %>% 
+  mutate(t = t + 5) %>% 
+  filter(pebt == 1)) %>% 
+  arrange(state, t) %>% 
+  rename(pebt_3m = pebt) %>%
+  left_join(with_kids, .) %>% 
+  mutate(pebt_3m = ifelse(pebt_2m == 1, 1, pebt_3m),
+         pebt_3m = ifelse(is.na(pebt_3m), 0, pebt_3m))
+
+
+low_income_with_kids_3m <- low_income_with_kids %>% 
+  select(t, state, pebt) %>% 
+  mutate(t = t + 4) %>% 
+  filter(pebt == 1) %>% 
+  rbind(low_income_with_kids %>% 
+  select(t, state, pebt) %>% 
+  mutate(t = t + 5) %>% 
+  filter(pebt == 1)) %>% 
+  arrange(state, t) %>% 
+  rename(pebt_3m = pebt) %>%
+  left_join(low_income_with_kids, .) %>% 
+  mutate(pebt_3m = ifelse(pebt_2m == 1, 1, pebt_3m),
+         pebt_3m = ifelse(is.na(pebt_3m), 0, pebt_3m))
+```
+
+
+
+
+# Variable Summaries 
+
+```{r message = F, warning = F, echo = F}
+
+summary_tabling <- function(df){
+  
+  numeric_vars <- df %>% 
+    select(- month, -month_num, - state, -perc_snap_m1, -t_dummy, -t, -t1, -t2, -w2, -pebt_post, -pebt_1m, -pebt_2m) 
+  
+  numeric_vars <- numeric_vars %>% 
+    select(people, names(numeric_vars)) 
+  
+  map_dfr(numeric_vars, mean) %>% 
+    pivot_longer(cols = 1:15, names_to = "variable", values_to = "Mean") %>% 
+    left_join(map_dfr(numeric_vars, min) %>% 
+                pivot_longer(cols = 1:15, names_to = "variable", values_to = "Min")) %>% 
+    left_join(map_dfr(numeric_vars, max) %>% 
+                pivot_longer(cols = 1:15, names_to = "variable", values_to = "Max")) %>% 
+    mutate_if(is.numeric, round, digits = 2) %>% 
+    mutate_if(is.numeric, format, nsmall = 2) %>%
+    mutate(Mean = ifelse(variable == "people", 
+                         Mean %>% 
+                           as.numeric %>% 
+                           comma_format()() %>% 
+                           format(nsmall = 0) %>% 
+                           str_remove("\\..*"), 
+                         Mean),
+           Min = ifelse(variable == "people", 
+                         Min %>% 
+                           as.numeric %>% 
+                           comma_format()() %>% 
+                           format(nsmall = 0) %>% 
+                           str_remove("\\..*"), 
+                         Min),
+           Max = ifelse(variable == "people", 
+                        Max %>% 
+                           as.numeric %>% 
+                           comma_format()() %>% 
+                           format(nsmall = 0) %>% 
+                           str_remove("\\..*"), 
+                         Max),
+           ) %>% 
+    mutate(Range = paste(Min, " - ", Max)) %>% 
+    select(variable, Mean, Range) 
+
+}
+
+
+summary_df <- summary_tabling(all) %>% 
+  rename("Meanx" = "Mean", "Rangex" = "Range") %>% 
+  left_join(summary_tabling(with_kids)) %>% 
+  rename("Meany" = "Mean", "Rangey" = "Range") %>% 
+  left_join(summary_tabling(low_income))
+
+names(summary_df) <- c(" ", "Mean", "Range", "Mean", "Range", "Mean", "Range")
+
+
+summary_df %>% 
+  kable() %>% 
+  kable_classic(html_font = "Times") %>% 
+  pack_rows(index = c("Population" = 1, "Program Participation" = 2, 
+            "Outcome Variables" = 3, "Education" = 4, "Race/Ethnicity" = 5)) %>% 
+  add_header_above(c(" " = 1, "All Households" = 2, "Households With Kids" = 2, "Low Income Households" = 2))
+
+  
+```
+
+# Naive Regressions 
+
+```{r message = F, warning = F, echo = F, eval = F }
+## Note: eval = False because this is an old version of the naive regressions 
+
+# All With Children - Food Insecurity 
+pebt_fi <- lm(perc_fi ~ pebt, weights = people, data = with_kids)
+snap_fi <- lm(perc_fi ~ perc_snap, weights = people, data = with_kids)
+both_fi <- lm(perc_fi ~ pebt + perc_snap, weights = people, data = with_kids)
+
+# All With Children - Hunger 
+pebt_hungry <- lm(perc_hungry ~ pebt, weights = people, data = with_kids)
+snap_hungry <- lm(perc_hungry ~ perc_snap, weights = people, data = with_kids)
+both_hungry <- lm(perc_hungry ~ pebt + perc_snap, weights = people, data = with_kids)
+
+# All With Children - NonConfident 
+pebt_nonconf <- lm(perc_nonconf ~ pebt, weights = people, data = with_kids)
+snap_nonconf <- lm(perc_nonconf ~ perc_snap, weights = people, data = with_kids)
+both_nonconf <- lm(perc_nonconf ~ pebt + perc_snap, weights = people, data = with_kids)
+
+making_nice(
+  list(pebt_fi, snap_fi, both_fi, pebt_hungry, snap_hungry, both_hungry, pebt_nonconf, snap_nonconf, both_nonconf),
+  c("a", "b", "c", "d", "e", "f", "g", "h", "i"),
+  override_names = T,
+  c(" " = 1, "P-EBT" = 1, "SNAP" = 1, "P-EBT and SNAP" = 1,
+    "P-EBT" = 1, "SNAP" = 1, "P-EBT and SNAP" = 1,
+    "P-EBT" = 1, "SNAP" = 1, "P-EBT and SNAP" = 1),
+  c(" " = 1, "Food Insecurity" = 3, "Hunger" = 3, "Food Non-Confidence" = 3),
+  naive = T
+)
+```
+
+
+#### Food Insecurity   
+
+Households With Children 
+
+```{r message = F, warning = F, echo = F}
+# Food Insecurity 
+# All With Children - Food Insecurity 
+snap_fi <- lm(perc_fi ~ perc_snap, weights = people, data = with_kids)
+
+pebt_fi <- lm(perc_fi ~ pebt, weights = people, data = with_kids)
+both_fi <- lm(perc_fi ~ pebt + perc_snap, weights = people, data = with_kids)
+
+pebt_post_fi <- lm(perc_fi ~ pebt_post, weights = people, data = with_kids)
+both_post_fi <- lm(perc_fi ~ pebt_post + perc_snap, weights = people, data = with_kids)
+
+pebt_1m_fi <- lm(perc_fi ~ pebt_1m, weights = people, data = with_kids)
+both_1m_fi <- lm(perc_fi ~ pebt_1m + perc_snap, weights = people, data = with_kids)
+
+
+pebt_2m_fi <- lm(perc_fi ~ pebt_2m, weights = people, data = with_kids)
+both_2m_fi <- lm(perc_fi ~ pebt_2m + perc_snap, weights = people, data = with_kids)
+
+making_nice(
+  list(snap_fi, pebt_fi, both_fi, pebt_post_fi, both_post_fi, pebt_1m_fi, both_1m_fi, pebt_2m_fi, both_2m_fi), 
+  c("a", "b", "c", "d", "e", "f", "g", "h", "i"), 
+   override_names = T, 
+  c(" " = 1, "SNAP"= 1, "P-EBT"= 1, "Both"= 1, "P-EBT"= 1, "Both"= 1, "P-EBT"= 1, "Both"= 1,"P-EBT"= 1, "Both"= 1),
+  c(" " = 2, "Release Week" = 2, "Lagged" = 2, "1 Month" = 2, "2 Month" = 2),
+  naive = T
+) 
+
+```
+
+#### Hunger
+
+Households With Children 
+
+```{r message = F, warning = F, echo = F}
+# Food Insecurity 
+# All With Children - Food Insecurity 
+snap_hungry <- lm(perc_hungry ~ perc_snap, weights = people, data = with_kids)
+
+pebt_hungry <- lm(perc_hungry ~ pebt, weights = people, data = with_kids)
+both_hungry <- lm(perc_hungry ~ pebt + perc_snap, weights = people, data = with_kids)
+
+pebt_post_hungry <- lm(perc_hungry ~ pebt_post, weights = people, data = with_kids)
+both_post_hungry <- lm(perc_hungry ~ pebt_post + perc_snap, weights = people, data = with_kids)
+
+pebt_1m_hungry <- lm(perc_hungry ~ pebt_1m, weights = people, data = with_kids)
+both_1m_hungry <- lm(perc_hungry ~ pebt_1m + perc_snap, weights = people, data = with_kids)
+
+
+pebt_2m_hungry <- lm(perc_hungry ~ pebt_2m, weights = people, data = with_kids)
+both_2m_hungry <- lm(perc_hungry ~ pebt_2m + perc_snap, weights = people, data = with_kids)
+
+pebt_3m_hungry <- lm(perc_hungry ~ pebt_2m, weights = people, data = with_kids)
+both_3m_hungry <- lm(perc_hungry ~ pebt_2m + perc_snap, weights = people, data = with_kids)
+
+
+making_nice(
+  list(snap_hungry, pebt_hungry, both_hungry, pebt_post_hungry, both_post_hungry, pebt_1m_hungry, both_1m_hungry, pebt_2m_hungry, both_2m_hungry), 
+  c("a", "b", "c", "d", "e", "f", "g", "h", "i"), 
+   override_names = T, 
+  c(" " = 1, "SNAP"= 1, "P-EBT"= 1, "Both"= 1, "P-EBT"= 1, "Both"= 1, "P-EBT"= 1, "Both"= 1, "P-EBT"= 1, "Both"= 1),
+  c(" " = 2, "Release Week" = 2, "Lagged" = 2, "1 Month" = 2, "2 Month" = 2),
+  naive = T
+) 
+```
+
+
+#### Food Non-Confidence 
+
+Households With Children 
+
+
+```{r message = F, warning = F, echo = F}
+# Food Insecurity 
+# All With Children - Food Insecurity 
+snap_nonconf <- lm(perc_nonconf ~ perc_snap, weights = people, data = with_kids)
+
+pebt_nonconf <- lm(perc_nonconf ~ pebt, weights = people, data = with_kids)
+both_nonconf <- lm(perc_nonconf ~ pebt + perc_snap, weights = people, data = with_kids)
+
+pebt_post_nonconf <- lm(perc_nonconf ~ pebt_post, weights = people, data = with_kids)
+both_post_nonconf <- lm(perc_nonconf ~ pebt_post + perc_snap, weights = people, data = with_kids)
+
+pebt_1m_nonconf <- lm(perc_nonconf ~ pebt_1m, weights = people, data = with_kids)
+both_1m_nonconf <- lm(perc_nonconf ~ pebt_1m + perc_snap, weights = people, data = with_kids)
+
+
+pebt_2m_nonconf <- lm(perc_nonconf ~ pebt_2m, weights = people, data = with_kids)
+both_2m_nonconf <- lm(perc_nonconf ~ pebt_2m + perc_snap, weights = people, data = with_kids)
+
+
+making_nice(
+  list(snap_nonconf, pebt_nonconf, both_nonconf, pebt_post_nonconf, both_post_nonconf, pebt_1m_nonconf, both_1m_nonconf, pebt_2m_nonconf, both_2m_nonconf), 
+  c("a", "b", "c", "d", "e", "f", "g", "h", "i"), 
+   override_names = T, 
+  c(" " = 1, "SNAP"= 1, "P-EBT"= 1, "Both"= 1, "P-EBT"= 1, "Both"= 1, "P-EBT"= 1, "Both"= 1, "P-EBT"= 1, "Both"= 1),
+  c(" " = 2, "Release Week" = 2, "Lagged" = 2, "1 Month" = 2, "2 Month" = 2),
+  naive = T
+) 
+```
+
+
+
+
+# SNAP Alone
+
+## All Households 
+
+```{r echo = F, message = F, warning = F}
+
+safi <- lm(perc_fi ~ perc_snap + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = all)
+
+sah <- lm(perc_hungry ~ perc_snap + t1 + t2 + state +  w2 + 
+            perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = all)
+
+
+sanc <- lm(perc_nonconf ~ perc_snap + t1 + t2 + state +  w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = all)
+
+making_nice(
+  list(safi, sah, sanc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence")
+)
+
+```
+
+## Households With Kids and Low Income Households 
+
+```{r echo = F, message = F, warning = F}
+## Households With Kids 
+
+skfi <- lm(perc_fi ~ perc_snap + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+skh <- lm(perc_hungry ~ perc_snap + t1 + t2 + state +  w2 + 
+            perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+sknc <- lm(perc_nonconf ~ perc_snap + t1 + t2 + state +  w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+
+## Low Income Households 
+slifi <- lm(perc_fi ~ perc_snap + t1 + t2 + state +  w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income)
+
+slih <- lm(perc_hungry ~ perc_snap + t1 + t2 + state +  w2 + 
+            perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income)
+
+slinc <- lm(perc_nonconf ~ perc_snap + t1 + t2 + state +  w2 + 
+            perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income)
+
+
+# Table 
+
+making_nice(
+  list(skfi, skh,sknc, slifi, slih, slinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households" = 3)
+)
+```
+
+
+
+# P-EBT - Across Various Treatment Horizons 
+
+## P-EBT Treatment Horizon: Period of Release (two weeks)
+
+#### P-EBT Alone 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+pkfi <- lm(perc_fi ~ pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+pkh <- lm(perc_hungry ~  pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+pknc <- lm(perc_nonconf ~  pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+## Low Income Households 
+
+plifi <- lm(perc_fi ~  pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids)
+
+plih <- lm(perc_hungry ~  pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids)
+
+plinc <- lm(perc_nonconf ~ pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids)
+# Table
+making_nice(
+  list(pkfi, pkh, pknc, plifi, plih, plinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+##### P-EBT and SNAP 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+bkfi <- lm(perc_fi ~ pebt + t1 + t2 + state + w2 +  perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+bkh <- lm(perc_hungry ~  pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+bknc <- lm(perc_nonconf ~  pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids)
+
+## Low Income Households 
+
+blifi <- lm(perc_fi ~  pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids)
+
+blih <- lm(perc_hungry ~  pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids)
+
+blinc <- lm(perc_nonconf ~ pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids)
+# Table
+making_nice(
+  list(bkfi, bkh, bknc, blifi, blih, blinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+
+```
+
+
+## P-EBT Treatment Horizon: Period After Release (two weeks)
+
+#### P-EBT Alone 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+pkfi <- lm(perc_fi ~ pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("week after"))
+
+pkh <- lm(perc_hungry ~  pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("week after"))
+
+pknc <- lm(perc_nonconf ~  pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("week after"))
+
+## Low Income Households 
+
+plifi <- lm(perc_fi ~  pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("week after"))
+
+plih <- lm(perc_hungry ~  pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("week after"))
+
+plinc <- lm(perc_nonconf ~ pebt + t1 + t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("week after"))
+# Table
+making_nice(
+  list(pkfi, pkh, pknc, plifi, plih, plinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+##### P-EBT and SNAP 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+bkfi <- lm(perc_fi ~ pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("week after"))
+
+bkh <- lm(perc_hungry ~  pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("week after"))
+
+bknc <- lm(perc_nonconf ~  pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("week after"))
+
+## Low Income Households 
+
+blifi <- lm(perc_fi ~  pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("week after"))
+
+blih <- lm(perc_hungry ~  pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("week after"))
+
+blinc <- lm(perc_nonconf ~ pebt + t1 + t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("week after"))
+# Table
+making_nice(
+  list(bkfi, bkh, bknc, blifi, blih, blinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+
+## P-EBT Treatment Horizon: Period of Release + Period After Release (one month)
+
+#### P-EBT Alone 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+pkfi <- lm(perc_fi ~ pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("one month"))
+
+pkh <- lm(perc_hungry ~  pebt*t1 + pebt*t2+ state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("one month"))
+
+pknc <- lm(perc_nonconf ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("one month"))
+
+## Low Income Households 
+
+plifi <- lm(perc_fi ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("one month"))
+
+plih <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("one month"))
+
+plinc <- lm(perc_nonconf ~ pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("one month"))
+# Table
+making_nice(
+  list(pkfi, pkh, pknc, plifi, plih, plinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+##### P-EBT and SNAP 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+bkfi <- lm(perc_fi ~ pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("one month"))
+
+bkh <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("one month"))
+
+bknc <- lm(perc_nonconf ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("one month"))
+
+## Low Income Households 
+
+blifi <- lm(perc_fi ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("one month"))
+
+blih <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("one month"))
+
+blinc <- lm(perc_nonconf ~ pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("one month"))
+# Table
+making_nice(
+  list(bkfi, bkh, bknc, blifi, blih, blinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+
+## P-EBT Treatment Horizon: Period of Release - Two Periods After Release (two months)
+
+#### P-EBT Alone 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+pkfi <- lm(perc_fi ~ pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("two months"))
+
+pkh <- lm(perc_hungry ~  pebt*t1 + pebt*t2+ state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("two months"))
+
+pknc <- lm(perc_nonconf ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("two months"))
+
+## Low Income Households 
+
+plifi <- lm(perc_fi ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("two months"))
+
+plih <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("two months"))
+
+plinc <- lm(perc_nonconf ~ pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("two months"))
+# Table
+making_nice(
+  list(pkfi, pkh, pknc, plifi, plih, plinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+##### P-EBT and SNAP 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+bkfi <- lm(perc_fi ~ pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("two months"))
+
+bkh <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("two months"))
+
+bknc <- lm(perc_nonconf ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids %>% change_pebt("two months"))
+
+## Low Income Households 
+
+blifi <- lm(perc_fi ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("two months"))
+
+blih <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("two months"))
+
+blinc <- lm(perc_nonconf ~ pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids %>% change_pebt("two months"))
+# Table
+making_nice(
+  list(bkfi, bkh, bknc, blifi, blih, blinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+
+
+
+
+## P-EBT Treatment Horizon: Three Months After Release
+
+
+#### P-EBT Alone 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+pkfi <- lm(perc_fi ~ pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids_3m)
+
+pkh <- lm(perc_hungry ~  pebt*t1 + pebt*t2+ state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids_3m)
+
+pknc <- lm(perc_nonconf ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids_3m)
+
+## Low Income Households 
+
+plifi <- lm(perc_fi ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids_3m)
+
+plih <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids_3m)
+
+plinc <- lm(perc_nonconf ~ pebt*t1 + pebt*t2 + state + w2 + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids_3m)
+# Table
+making_nice(
+  list(pkfi, pkh, pknc, plifi, plih, plinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+##### P-EBT and SNAP 
+
+```{r echo = F, message = F, warning = F}
+
+## Households With Kids 
+
+bkfi <- lm(perc_fi ~ pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids_3m)
+
+bkh <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids_3m)
+
+bknc <- lm(perc_nonconf ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = with_kids_3m)
+
+## Low Income Households 
+
+blifi <- lm(perc_fi ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids_3m)
+
+blih <- lm(perc_hungry ~  pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids_3m)
+
+blinc <- lm(perc_nonconf ~ pebt*t1 + pebt*t2 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = low_income_with_kids_3m)
+# Table
+making_nice(
+  list(bkfi, bkh, bknc, blifi, blih, blinc), 
+  c("Food Insecurity", "Hunger", "Food Non-Confidence", 
+    "Food Insecurity ", "Hunger ", "Food Non-Confidence "),  
+ header_row_titles = c(" " = 1, "Households With Children" = 3, "Low Income Households With Children" = 3)
+)
+```
+
+
+
+```{r}
+a <- low_income_with_kids %>% 
+  mutate(t2 = ifelse(t2 > 4, 0 , t2),
+         t3 = ifelse(t > 12, t - 12, 0)) %>% 
+  lm(perc_nonconf ~ pebt_1m*t1 + pebt_1m*t2 + pebt_1m*t3 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = .)
+
+b <- low_income_with_kids %>% 
+  mutate(t2 = ifelse(t2 > 4, 0 , t2),
+         t3 = ifelse(t > 12, t - 12, 0)) %>% 
+  lm(perc_fi ~ pebt_1m*t1 + pebt_1m*t2 + pebt_1m*t3 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = .)
+
+c <- low_income_with_kids %>% 
+  mutate(t2 = ifelse(t2 > 4, 0 , t2),
+         t3 = ifelse(t > 12, t - 12, 0)) %>% 
+  lm(perc_hungry ~ pebt_1m*t1 + pebt_1m*t2 + pebt_1m*t3 + state + w2 + perc_snap + 
+             perc_asian + perc_black + perc_latino + perc_other + 
+             perc_some_college + perc_highschool + perc_no_highschool,
+            weights = people, 
+            data = .)
+
+
+summary(c)
+```
+
+
+

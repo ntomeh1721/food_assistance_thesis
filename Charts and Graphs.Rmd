@@ -1,0 +1,569 @@
+---
+title: "Charts and Graphs"
+author: "Natalie Tomeh"
+date: "5/31/2021"
+output: html_document
+---
+
+
+```{r Set Up, message = F, warning = F, echo = F}
+# Loading Libraries 
+library(tidyverse)
+library(tidymodels)
+library(Metrics)
+library(gtsummary)
+
+library(knitr)
+library(kableExtra)
+
+library(readxl)
+library(openxlsx)
+library(lubridate)
+library(janitor)
+
+
+# Loading 
+
+## Functions 
+load("data_editing/functions.rda")
+
+## Data 
+loaded <- read_csv("data/datasets/final.csv")
+
+# Setting not in 
+`%notin%` <- negate(`%in%`)
+
+ 
+# Removing Scientific Notation 
+options(scipen = 999)
+```
+
+```{r Datasets, message = F, warning = F, echo = F}
+all <- lens() %>% 
+  mutate(
+    month = paste0(substring(month, 1, 1) %>% toupper(),
+                   substring(month, 2, 3), 
+                   ".")
+  )
+
+with_kids <- lens(with_kids = T) %>% 
+  mutate(
+    month = paste0(substring(month, 1, 1) %>% toupper(),
+                   substring(month, 2, 3), 
+                   ".")
+  )
+
+low_income <- lens(low_income = T)%>% 
+  mutate(
+    month = paste0(substring(month, 1, 1) %>% toupper(),
+                   substring(month, 2, 3), 
+                   ".")
+  )
+
+low_income_with_kids <- lens(low_income = T, with_kids = T)%>% 
+  mutate(
+    month = paste0(substring(month, 1, 1) %>% toupper(),
+                   substring(month, 2, 3), 
+                   ".")
+  )
+```
+
+
+
+# Data Discussion Section 
+
+
+### Income Guidelines Cutoff 
+
+Poverty Guidelines 
+
+```{r echo = F, message = F, warning = F}
+poverty <- read_csv("data/guides/fed_income_poverty.csv")
+
+
+hps_bracket <- tibble(
+  `Income Bracket` = c(
+    "1. < $25,000",
+    "2. $25,000 - $34,999", 
+    "3. $35,000 - $49,999",
+    "4. $50,000 - $74,999", 
+    "5. $75,000 - $99,999", 
+    "6. $100,000 - $149,999", 
+    "7. $150,000 - $200,000", 
+    "8. > $200,000 "
+  ), 
+  mins = c(0, 25000, 35000, 50000, 75000, 100000, 150000, 200000),
+  maxes = c(25000, 34999, 49999, 74999, 99999, 149999, 200000, 1000000)
+) 
+
+
+poverty_brackets <- poverty %>% 
+  mutate(income = 1.5*income) %>% 
+  crossing(hps_bracket) %>% 
+  filter(income >= mins & income <= maxes) %>% 
+  select(state, household_members, income, "HPS Income Bracket" = "Income Bracket")
+
+
+poverty %>%
+  filter(state == "all")%>% 
+  mutate(income = substring(income, 1, 2) %>% 
+           paste0("$", . , ",", substring(income, 3, 5))) %>% 
+  select("Household Members" = household_members, "Income" = income) %>% 
+  kable(escape = F, caption = "Poverty Income Thresholds: Other 48 States and Washington, D.C.", align = c("l", "l")) %>% 
+  kable_classic(html_font = "Times") 
+
+poverty %>%
+  filter(state == "alaska") %>%
+  mutate(income = substring(income, 1, 2) %>% 
+           paste0("$", . , ",", substring(income, 3, 5)))%>% 
+  select("Household Members" = household_members, "Income" = income) %>% 
+  kable(escape = F, caption = "Poverty Income Thresholds: Alaska", align = c("l", "l")) %>% 
+  kable_classic(html_font = "Times") 
+
+
+poverty %>%
+  filter(state == "hawaii") %>%
+  mutate(income = substring(income, 1, 2) %>% 
+           paste0("$", . , ",", substring(income, 3, 5)))%>% 
+  select("Household Members" = household_members, "Income" = income) %>% 
+  kable(escape = F, caption = "Poverty Income Thresholds: Hawai'i", align = c("l", "l")) %>% 
+  kable_classic(html_font = "Times") 
+
+
+
+```
+
+
+HPS Income Bracket 
+```{r echo = F, message = F, warning = F}
+
+hps_bracket %>% 
+  select(-mins, -maxes) %>% 
+  kable(escape = F, caption = "HPS Income Brackets", align = c("l", "l")) %>% 
+  kable_classic(html_font = "Times") 
+
+
+```
+
+
+
+### SNAP Data
+
+Comparing State Administrative Data to HPS
+```{r echo = F, message = F, warning = F}
+## State Administrative Data on SNAP
+
+state_snap <- read_csv("data/guides/state_snap_data.csv")
+
+names(state_snap) <- names(state_snap) %>% tolower()
+
+state_snap <- state_snap %>% 
+  filter(state != "Wiconsin") %>% 
+  select(-individuals) %>% 
+  rename("type" = "x3") %>%
+  pivot_longer(cols = 3:14, names_to = "month", values_to = "snap_counts") %>% 
+  na.omit(people) %>% 
+  mutate(month_num = case_when(
+    month == "january" ~ 1, 
+    month == "february"~2, 
+    month == "march"~3, 
+    month == "april"~4, 
+    month =="may"~5, 
+    month == "june"~6, 
+    month =="july"~7, 
+    month == "august"~8, 
+    month == "september"~9, 
+    month == "october"~10, 
+    month ==  "november"~11,  
+    month ==  "december"~12
+  )) %>% 
+  pivot_wider(names_from = "type", values_from = "snap_counts") %>% 
+  select(-individuals)
+
+### Household Pulse Survey Estimates 
+
+snap_monthly <- read_csv("data/snap_monthly.csv")
+
+graph_data <- snap_monthly %>%
+  group_by(month) %>%
+  summarize(n_snap = sum(n_snap)) %>%
+  left_join(all %>% select(month, month_num) %>% unique()) %>%
+  mutate(month_num = case_when(
+    month == "january" ~ 1,
+    month == "february" ~ 2,
+    month == "march" ~ 3,
+    TRUE ~ month_num
+  ),
+  month = substring(month, 1, 1) %>%
+    toupper() %>%
+    paste0(
+      substring(month, 2, 3),
+      "."
+    ))
+
+
+### Combining 
+
+comparison_graph <- snap_monthly %>% 
+  group_by(state, month, month_num) %>% 
+  summarize(n_snap = sum(n_snap)) %>% 
+  left_join(state_snap, .) %>% 
+  rename(state_data = households, 
+         hps = n_snap) %>% 
+  left_join(all %>% 
+  group_by(t, state) %>% 
+  summarize(people = sum(people)) %>% 
+  group_by(state) %>% 
+  summarize(people = mean(people))) %>% 
+  mutate(
+    month = paste0(substring(month, 1, 1) %>% toupper(),
+                   substring(month, 2, 3), 
+                   ".")
+  ) 
+
+
+
+
+
+comparison_graph %>% 
+  mutate(
+    too_far = abs(state_data - hps)/state_data > 0.5, 
+    too_far_color = ifelse(too_far == F, "Other", state),
+    too_far_color = factor(too_far_color, levels = c(comparison_graph$state %>% unique(), "Other"))
+  ) %>% 
+   na.omit(too_far) %>% 
+  ggplot(aes(x = state_data/1000000, y = hps/1000000, color = too_far_color)) + 
+  geom_point(size = 2.5, alpha = 0.75) + 
+  geom_abline(slope = 1, intercept = 0) + 
+  labs(
+    x = "State Administrative Data", 
+    y = "Household Pulse Survey Data",
+    title = "SNAP Households (Millions)",
+    color = "Outliers"
+    )  +
+  scale_color_manual(values = c("#836EAA", "#7FCECD", "#FFC520", "#D85820", "#BBB8B8",
+                                "#EF553F", "#008656", "#58B947")) +
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times")
+  )
+ 
+comparison_graph %>% 
+  mutate(
+    hps = 100*hps/people, 
+    state_data = 100*state_data/people,
+    too_far = ifelse((abs(hps - state_data)/state_data) > 0.5, T, F)) %>% 
+  ggplot(aes(x = state_data, y = hps, color = month_num)) + 
+  geom_point(size = 2.5, alpha = 0.9) + 
+  geom_abline(slope = 1, intercept = 0) + 
+  labs(
+    x = "State Administrative Data", 
+    y = "Household Pulse Survey Data",
+    title = "SNAP Households (Millions)",
+    color = "Outliers"
+    )  +
+   scale_color_gradient(low = "#BBB8B8", high = "#4E2A84",
+                        breaks = seq(0, 12, 3),
+                        labels = c("", "Mar.", "Jun.", "Sep.", "Dec.")) +
+  scale_x_continuous(breaks = seq(0, 15, 5), 
+                     labels = seq(0, 15, 5) %>% paste0("%"),
+                     limits = c(0, 15)) + 
+  scale_y_continuous(breaks = seq(0, 15, 5), 
+                     labels = seq(0, 15, 5) %>% paste0("%"),
+                     limits = c(0, 15)) + 
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times")
+  )
+
+comparison_graph %>% 
+  mutate(
+    hps = 100*hps/people, 
+    state_data = 100*state_data/people) %>% 
+  select(hps, state_data) %>% 
+  lm(state_data ~ hps, data =.) %>% 
+  summary()
+
+``` 
+
+
+Monthly SNAP Participation
+
+```{r}
+comparison_graph %>% 
+  group_by( month_num) %>% 
+  summarize(hps = sum(hps), people = sum(people)) %>% 
+  mutate(
+    hps = 100*hps/people) %>% 
+  ggplot(aes(x = month_num, y = hps)) + 
+  geom_point(size = 2.5, alpha = 0.9) + 
+  geom_line() + 
+  labs(
+    x = NULL, 
+    y = NULL, 
+    title = "SNAP Monthly Participation Rate",
+    subtitle = "According to Household Pulse Survey Data"
+    )  +
+  scale_x_continuous(breaks = seq(1, 12, 1), 
+                     labels = comparison_graph %>% arrange(month_num) %>% pluck("month") %>% unique()) + 
+  scale_y_continuous(breaks = seq(0, 10, 2.5),
+                     labels = seq(0, 10, 2.5) %>% paste0("%"),
+                     limits = c(0, 10)) +
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times")
+  )
+```
+
+
+# Methods 
+
+
+### Two Discontinuous Linear Time Trends 
+
+```{r}
+process <- function(df, lab){
+  
+  df %>% 
+  mutate(n_fi = perc_fi * people / 100, 
+         n_hungry = perc_hungry * people / 100, 
+         n_nonconf = perc_nonconf * people / 100) %>% 
+  group_by(t, month_num, month) %>% 
+  summarize(n_fi = sum(n_fi), 
+            n_hungry = sum(n_hungry), 
+            n_nonconf = sum(n_nonconf), 
+            people = sum(people)) %>% 
+  mutate(perc_fi = 100 * n_fi / people, 
+         perc_hungry = 100*n_hungry/people, 
+         perc_nonconf = 100*n_nonconf/people,
+         set = lab) %>% 
+    select(set, t, month, month_num, perc_fi, perc_hungry, perc_nonconf)
+  
+  }
+
+  
+dat <- process(all, "All") %>% 
+  rbind(process(with_kids, "With Kids")) %>% 
+  rbind(process(low_income, "Low Income")) %>% 
+  rbind(process(low_income_with_kids, "Low Income With Kids"))
+
+
+dat %>% 
+  ggplot(aes(x = t, y = perc_fi, color = set, group = interaction(set, t < 9))) + 
+  geom_point() + 
+  geom_line() + 
+ #  geom_smooth(method = "lm", se = F, size = 1) +
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times", size = 12)
+  ) + 
+  scale_x_continuous(breaks = seq(1, 17, 2),
+                     labels = dat %>% arrange(t) %>% pluck("month") %>% unique()) + 
+  scale_y_continuous(breaks = seq(0, 60, 10),
+                     labels = seq(0, 60, 10) %>% paste0("%"),
+                     limits = c(0, 60)) + 
+  scale_color_manual(values = c("#836EAA", "#7FCECD", "#FFC520", "#D85820", "#BBB8B8",
+                                "#EF553F", "#008656", "#58B947")) + 
+  labs(
+    x = NULL,
+    y = "Food Insecurity %",
+    color = "Respondents"
+  )
+
+dat %>% 
+  ggplot(aes(x = t, y = perc_hungry, color = set, group = interaction(set, t < 9))) + 
+  geom_point() + 
+  geom_line() + 
+ #  geom_smooth(method = "lm", se = F, size = 1) +
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times", size = 12)
+  ) + 
+  scale_x_continuous(breaks = seq(1, 17, 2),
+                     labels = dat %>% arrange(t) %>% pluck("month") %>% unique()) + 
+  scale_y_continuous(breaks = seq(0, 40, 10),
+                     labels = seq(0, 40, 10) %>% paste0("%"),
+                     limits = c(0, 40)) + 
+  scale_color_manual(values = c("#836EAA", "#7FCECD", "#FFC520", "#D85820", "#BBB8B8",
+                                "#EF553F", "#008656", "#58B947")) + 
+  labs(
+    x = NULL,
+    y = "Hunger (%)",
+    color = "Respondents"
+  )
+
+dat %>% 
+  ggplot(aes(x = t, y = perc_nonconf, color = set, group = interaction(set, t < 9))) + 
+  geom_point() + 
+  geom_line() + 
+  geom_smooth(method = "lm", se = F, size = 1) +
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times", size = 12)
+  ) + 
+  scale_x_continuous(breaks = seq(1, 17, 2),
+                     labels = dat %>% arrange(t) %>% pluck("month") %>% unique()) + 
+  scale_y_continuous(breaks = seq(0, 90, 10),
+                     labels = seq(0, 90, 10) %>% paste0("%"),
+                     limits = c(0, 90)) + 
+  scale_color_manual(values = c("#836EAA", "#7FCECD", "#FFC520", "#D85820", "#BBB8B8",
+                                "#EF553F", "#008656", "#58B947")) + 
+  labs(
+    x = NULL,
+    y = "Food Non-Confidence (%)",
+    color = "Respondents"
+  )
+
+```
+
+
+P-EBT Releases 
+```{r}
+pebt <- read_csv("data/datasets/pebt_data.csv") %>% 
+  group_by(t, state) %>% 
+  summarize(pebt = max(pebt))
+
+
+  
+  
+post <- pebt %>% 
+    select(t, state, pebt) %>% 
+    filter(pebt == 1) %>% 
+    mutate(
+      t = t + 1
+    ) %>% 
+    rename(pebt_post = pebt) %>% 
+    unique()
+
+
+
+pebt_1m_df <- pebt %>% 
+    select(t, state, pebt) %>% 
+    filter(pebt == 1) %>% 
+    rename(pebt_1m = pebt) %>% 
+    rbind(post %>% rename(pebt_1m = pebt_post)) %>% 
+    unique() 
+  
+  # Getting a dummy for a two-month horizon of p-ebt 
+pebt_2m_df <- pebt_1m_df %>% 
+    mutate(t = t + 2) %>% 
+    rbind(pebt_1m_df) %>% 
+    rename(pebt_2m = pebt_1m) %>% 
+    unique() 
+  
+  
+
+
+pebt_dat <- left_join(pebt, post) %>% 
+  left_join(pebt_1m_df) %>% 
+  left_join(pebt_2m_df) %>% 
+  mutate_all(~ifelse(is.na(.), 0, .)) %>% 
+  mutate(wave = case_when(
+    t < 8 ~ "First Wave", 
+    t == 8 ~ "Hiatus", 
+    t > 8 ~ "Second Wave"
+  ))
+  
+
+pebt_dat %>% 
+  filter(pebt == 1) %>% 
+  ggplot(aes(x = t, fill = wave)) + 
+  geom_bar(stat = "count") +   
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times", size = 12)
+  ) + 
+  scale_x_continuous(breaks = seq(1, 18, 2),
+                     labels = dat %>% arrange(t) %>% pluck("month") %>% unique(),
+                     limits = c(-1, 18)) + 
+  # scale_y_continuous(breaks = seq(0, 30, 10),
+  #                    labels = seq(0, 30, 10),
+  #                    limits = c(0, 35)) + 
+  labs(
+    x = NULL,
+    title = "Treatment",
+    y = NULL, 
+    fill = NULL 
+  ) + 
+  scale_fill_manual(values = c( "#EF553F", "#BBB8B8", "#7FCECD")) 
+
+
+pebt_dat %>% 
+  filter(pebt_1m == 1) %>% 
+  ggplot(aes(x = t, fill = wave)) + 
+  geom_bar(stat = "count") +   
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times", size = 12)
+  ) + 
+  scale_x_continuous(breaks = seq(0, 17, 2),
+                     labels = dat %>% arrange(t) %>% pluck("month") %>% unique(),
+                     limits = c(-1, 18)) + 
+  # scale_y_continuous(breaks = seq(0, 30, 10),
+  #                    labels = seq(0, 30, 10),
+  #                    limits = c(0, 35)) + 
+  labs(
+    x = NULL,
+    title = "One Month",
+    y = NULL, 
+    fill = NULL 
+  )+ 
+  scale_fill_manual(values = c( "#EF553F", "#BBB8B8", "#7FCECD")) 
+
+pebt_dat %>% 
+  filter(pebt_2m == 1) %>% 
+  ggplot(aes(x = t, fill = wave)) + 
+  geom_bar(stat = "count") +   
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Times", size = 12)
+  ) + 
+  scale_x_continuous(breaks = seq(0, 17, 2),
+                     labels = dat %>% arrange(t) %>% pluck("month") %>% unique(),
+                     limits = c(-1, 20)) + 
+  labs(
+    x = NULL,
+    title = "Two Month",
+    y = NULL, 
+    fill = NULL 
+  )
+
+lims <- strptime(c("2020-04-15", "2020-12-21"), format = "%Y-%m-%d") %>% as.POSIXct()
+
+pebt %>% 
+  select(state, snap1, snap2, snap3, 
+         nonsnap1, nonsnap2, nonsnap3, sept_pebt) %>% 
+  pivot_longer(cols = 2:8, names_to = "group", values_to = "date")%>% 
+  na.omit(date) %>% 
+  select(-group) %>% 
+  unique() %>% 
+  mutate(wave = case_when(
+    month(date) < 7 ~ "First", 
+    month(date) == 7 & day(date) <= 21 ~ "First", 
+    month(date) > 8 ~ "Second", 
+    month(date) == 8 & day(date) >= 19 ~ "Second", 
+    TRUE ~ "Hiatus"
+  )) %>% 
+  ggplot(aes(x = date, fill = wave)) + 
+  geom_histogram(bins = 17, color = "white") + 
+  theme_classic() + 
+  scale_x_datetime(breaks = "month", date_labels  = "%b %d", limits = lims) + 
+  scale_fill_manual(values = c( "#EF553F", "#BBB8B8", "#7FCECD")) + 
+  theme(
+    text = element_text(family = "Times", size = 12)
+  )  + 
+  labs(
+    x = NULL,
+    title = "Release Periods",
+    y = NULL, 
+    fill = "Survey Wave" 
+  )
+
+
+
+
+
+``` 
+
+
+
